@@ -1,0 +1,86 @@
+---
+title: Extreme drought , host density , sex and bullfrogs influence fungal pathogens
+  infection REDO
+author: "Travis McDevitt-Galles"
+date: "9/21/2017"
+output: html_document
+---
+
+```{r setup, include=FALSE, echo=False}
+
+install.packages(c("devtools","mvtnorm","loo","coda"), repos="https://cloud.r-project.org/",dependencies=TRUE)
+library(devtools)
+library(ggplot2)
+library(tidyr)
+install_github("rmcelreath/rethinking")
+
+library(rethinking)
+setwd("~/Desktop/Fall 2017/Lab meeting/Reading/Adams_etal._redone")
+
+drought.df <- read.csv("Adams_et_al._Data.csv")
+
+str(drought.df)
+```
+
+
+
+
+```{r}
+
+str(drought.df)
+
+at1 <- rbinom(1e6, 19, prob = (1/6))
+
+
+```
+
+
+```{r echo=T}
+pos.bd <- subset( drought.df, drought.df$Z.Spore.Equiv > 0)
+
+ggplot(pos.bd, aes( y = log10(Z.Spore.Equiv), x = Species )) +geom_boxplot() + theme_classic()
+
+
+
+
+```
+
+Exploring how to do a guassian process model in Rethinking package
+
+
+```{r, echo=T}
+data(Kline2)
+d <- Kline2
+data(islandsDistMatrix)
+d$society <- 1:10
+mGP <- map2stan(
+    alist(
+        total_tools ~ dpois( mu ),
+        log(mu) <- a + aj[society],
+        a ~ dnorm(0,10),
+        aj[society] ~ GPL2( Dmat , etasq , rhosq , 0.01 ),
+        etasq ~ dcauchy(0,1),
+        rhosq ~ dcauchy(0,1)
+    ),
+    data=list(
+        total_tools=d$total_tools,
+        society=d$society,
+        Dmat=islandsDistMatrix),
+    constraints=list(
+        etasq="lower=0",
+        rhosq="lower=0"
+    ),
+    warmup=1000 , iter=5000 , chains=4 )
+
+tracerplot(mGP)
+
+
+correct <- c(0,0,1,0,0,0,0,0,1,1,0,1,0,1,0,1,1,0,0)
+length(correct)
+sum(correct)
+
+
+binom.test(7,19,p=(1/6))
+
+
+```
