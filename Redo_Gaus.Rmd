@@ -23,19 +23,27 @@ str(drought.df)
 ```
 
 
-
+To start we will redo the mixed model for bd prevalence in the yellow legged frog, 
+first we need to create a new column for bd presence
 
 ```{r}
 
-str(drought.df)
 
-at1 <- rbinom(1e6, 19, prob = (1/6))
+# empty vector to store BD status
+drought.df$BD.prez <- rep(NA, nrow(drought.df))
 
+drought.df$BD.prez[ drought.df$Z.Spore.Equiv == 0 ] <- 0
+drought.df$BD.prez[ drought.df$Z.Spore.Equiv > 0 ] <- 1 
 
 ```
 
+Sweet now we have a new column that indicates whether or not the specimen was BD positive ( for now we are ignoring load we will not do that in bayesian)
 
 ```{r echo=T}
+
+
+
+
 pos.bd <- subset( drought.df, drought.df$Z.Spore.Equiv > 0)
 
 ggplot(pos.bd, aes( y = log10(Z.Spore.Equiv), x = Species )) +geom_boxplot() + theme_classic()
