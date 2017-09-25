@@ -8,13 +8,13 @@ output: html_document
 
 ```{r setup, include=FALSE, echo=False}
 
-install.packages(c("devtools","mvtnorm","loo","coda"), repos="https://cloud.r-project.org/",dependencies=TRUE)
+
 library(devtools)
 library(ggplot2)
 library(tidyr)
-install_github("rmcelreath/rethinking")
-
 library(rethinking)
+library(lme4)
+
 setwd("~/Desktop/Fall 2017/Lab meeting/Reading/Adams_etal._redone")
 
 drought.df <- read.csv("Adams_et_al._Data.csv")
@@ -39,24 +39,98 @@ drought.df$BD.prez[ drought.df$Z.Spore.Equiv > 0 ] <- 1
 
 Sweet now we have a new column that indicates whether or not the specimen was BD positive ( for now we are ignoring load we will not do that in bayesian)
 
+first we need to subset for the species code RABO
 ```{r echo=T}
 
+# sub setting for Rana boylii 
+rabo.only <- subset( drought.df , drought.df$Species == "RABO")
+    
+# crearing a new variable for water year and survey event as a factor
+ 
+rabo.only$fWater.year <- factor( rabo.only$Water.Year )
+
+rabo.only$fSurvey.event <- factor ( rabo.only$Survey.Event)
+
+## also need to drop larve due to lack of variaiton
+
+rabo.only <- rabo.only[rabo.only$Sex.stage != "LARV", ]
 
 
+final.model <- glmer( BD.prez ~ fWater.year + Sex.stage + Bullfrogs +
+                         Bullfrog.Time + (1|fSurvey.event), data = rabo.only,
+                     family = 'binomial' )
+
+summary(final.model)
+
+## killer we are off on the p-values for some reason but we are hitting the 
+## estimated coefficients, lets now look at Bullfrog BD prevalence
+## 
+
+
+Raca.only <- subset(drought.df, drought.df$Species == "RACA")
+
+Raca.only <- Raca.only[ Raca.only$Sex.stage != "F", ]
+
+Raca.only$fSample.event <- as.factor(Raca.only$Survey.Event)
+
+final.RACA <- glm( BD.prez ~ (Water.temp) + Sex.stage ,
+                     family='binomial', data = Raca.only )
+
+summary(final.RACA)
+```
+
+
+Sweet looks like we properly recreated to models lets recreate some of their 
+graphs
+
+```{r}
 
 pos.bd <- subset( drought.df, drought.df$Z.Spore.Equiv > 0)
 
 ggplot(pos.bd, aes( y = log10(Z.Spore.Equiv), x = Species )) +geom_boxplot() + theme_classic()
 
 
+temp.range <- seq( 10,22, length.out = 100)
 
+inter <- -25.6479 
+
+temp.effect <- 1.8956    
+
+pred <- rep(NA, 100)
+    
+for( i in 1:100){
+    pred[i] <- inter + temp.range[i] * temp.effect
+}
+
+pred.trans <- boot::inv.logit(pred)
+
+temp.plot <- ggplot( ) +  geom_line(aes( x= temp.range, y = pred.trans)) +
+    theme_classic()
+
+temp.plot <- temp.plot + geom_point(data= Raca.only,aes( x = Water.temp, y = BD.prez ,
+                                            color = Sex.stage),size = 5 )
+
+temp.plot + xlab("Water temperature") + ylab("BD Status")
 
 ```
+
+
+So it seems like we can't get the R. boylii BD load model to converge 
+
+The way Adams et al. delt with this issue is to run a bayesian model with priors 
+to improve model fit.
+
+but they include an additional random effect to account for autospatial correlations
+
+A GUASSIAN PROCESS!!!!
 
 Exploring how to do a guassian process model in Rethinking package
 
 
 ```{r, echo=T}
+
+
+
 data(Kline2)
 d <- Kline2
 data(islandsDistMatrix)
@@ -82,13 +156,6 @@ mGP <- map2stan(
 
 tracerplot(mGP)
 
-
-correct <- c(0,0,1,0,0,0,0,0,1,1,0,1,0,1,0,1,1,0,0)
-length(correct)
-sum(correct)
-
-
-binom.test(7,19,p=(1/6))
 
 
 ```
