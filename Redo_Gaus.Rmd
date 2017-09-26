@@ -8,12 +8,14 @@ output: html_document
 
 ```{r setup, include=FALSE, echo=False}
 
-
+library(ggmap)
 library(devtools)
 library(ggplot2)
 library(tidyr)
 library(rethinking)
 library(lme4)
+library(geosphere)
+library(ggridges)
 
 setwd("~/Desktop/Fall 2017/Lab meeting/Reading/Adams_etal._redone")
 
@@ -115,21 +117,15 @@ temp.plot + xlab("Water temperature") + ylab("BD Status")
 ```
 
 
-So it seems like we can't get the R. boylii BD load model to converge 
-
-The way Adams et al. delt with this issue is to run a bayesian model with priors 
-to improve model fit.
-
-but they include an additional random effect to account for autospatial correlations
-
-A GUASSIAN PROCESS!!!!
 
 Exploring how to do a guassian process model in Rethinking package
 
 
 ```{r, echo=T}
 
+#### DEMO !!!!! 
 
+Dmat
 
 data(Kline2)
 d <- Kline2
@@ -158,4 +154,247 @@ tracerplot(mGP)
 
 
 
+```
+
+
+Ok cool, seems kind of straight forward , lets give it a shot
+
+
+first lets run in our own data
+
+```{r}
+
+setwd("/Users/travismcdevitt-galles/Dropbox/Thesis/2nd Chapter/All_Years")
+
+# Reading in data, both Infection and Site level data
+odo_par <- read.csv("Odo_allYear_rm.csv")
+odo_par <- odo_par[-1176,] # removing an NA
+
+host_den <- read.csv("odo_per_net.csv")
+site_sum <- read.csv("site_summary.csv")
+
+# Combinding data sets
+odonat_df <- plyr::join(odo_par,host_den, by=c("Site", "Year"))
+
+
+# Subsetting rana only sites
+
+site_lev <- read.csv("Site_vars.csv") 
+
+odonat_df <- plyr::join ( odonat_df , site_lev, by=c("Site", "Year","Round"))
+
+odo_rana1 <- subset(odonat_df, odonat_df$Rana == 1)
+
+site.lat <- read.csv(file.choose())
+
+
+## you should reorder these rows to match the larger data file site order and
+##  provide each site with a unique id number
+levels(site.lat$Site)
+
+Euclid.site <- as.matrix(distm(site.lat[,2:3]))
+
+colnames(Euclid.site) <- site.lat$Site
+row.names(Euclid.site) <-  site.lat$Site
+
+Euc <- Euclid.site/1000
+
+## Ok i guess lets stop fuckind around and build the damn model
+
+
+gau.pros.at1 <- map2stan(
+    alist(
+        Haem ~ dbinom(1, p), # haemtoloechus is distributed by probability "p" , the 1 is treating it like a bernoulli trial
+        logit( p ) <- a + g[Site] , # just looking at how spaitials autocorrelated our data is
+        g[Site] ~ GPL2( meterDist , etasq, rhosq, sigma ) , 
+        a ~ dnorm(0, 10), # prio for our pooled mean risk
+        etasq ~ dcauchy( 0 , 1), # prior for the max correlation
+        rhosq ~ dcauchy( 0, 1), # prior for the decay rate
+        sigma ~ dcauchy(0,1) # prior for the site level variance
+    ),
+    data = list(
+        Haem = odo_rana1$Haem,
+        Site = odo_rana1$Site,
+        meterDist = Euc
+    ),
+    warmup = 2000, iter = 1e4, chains =4
+)
+
+summary(gau.pros.at1)
+
+
+## huh it looks like it worked!!!! lets plot the autocorrelation
+
+
+post <- extract.samples( gau.pros.at1 )
+
+curve( (median(post$etasq))* exp(-median(post$rhosq)* x^2 ), from=0 ,
+to=5,  ylim=c(0,10), ylab="Covariance", xlab="distance in Km", lwd=5) 
+
+
+for(i in 1:100){
+    curve((post$etasq[i])* exp(-(post$rhosq[i]) * x^2 ),add=T,
+          col=col.alpha("black", .2) ) 
+}
+
+
+
+# extracting correlation matrix for the sites
+# 
+# 
+    
+K <- matrix(0 , nrow=32, ncol=32)
+
+for( i in 1:32){
+    for( j in 1:32){
+        K[i,j] <- median(post$etasq) * 
+            exp(-median(post$rhosq) * Euc[i,j]^2) 
+    }
+}
+
+diag(K) <- median(post$etasq) + median(post$sigma)
+
+Rho <- round( cov2cor(K), 2)
+
+```
+
+
+Ok so the hierarchaly guassian process didnt work, maybe you dove in
+too deep, lets try something a bit easier and collapse the data to
+the site level , ignoring everything else
+
+```{r}
+
+site_sum <- odo_rana1 %>%
+    group_by(Site) %>%
+    summarize( n = n(),
+                prev.haem = mean(Haem) ,
+               nHaem = sum(Haem),
+               uninf = n() - sum(Haem),
+                odo.den = mean(odo_per),
+               pH = mean(pH)
+    )
+
+
+
+gau.pros.at2 <- map2stan(
+    alist(
+        Haem ~ dbinom(n, p), # haemtoloechus is distributed by probability "p" , the 1 is treating it like a bernoulli trial
+        logit( p ) <- a + g[Site] , # just looking at how spaitials autocorrelated our data is
+        g[Site] ~ GPL2( meterDist , etasq, rhosq, 0.01 ) , 
+        a ~ dnorm(0, 10), # prio for our pooled mean risk
+        etasq ~ dcauchy( 0 , 1), # prior for the max correlation
+        rhosq ~ dcauchy( 0, 1) # prior for the decay rate
+    ),
+    data = list(
+        Haem = site_sum$nHaem,
+        Site = site_sum$Site,
+        meterDist = Euc,
+        n = site_sum$n
+    ),
+    warmup = 2000, iter = 1e4, chains =4
+)
+
+
+summary(gau.pros.at2)
+
+
+post <- extract.samples( gau.pros.at2 )
+
+curve( (median(post$etasq))* exp(-median(post$rhosq)* x^2 ), from=0 ,
+to=5, ylim=c(0,10), ylab="Covariance", xlab="distance in Km") 
+
+for(i in 1:100){
+    curve((post$etasq[i])* exp(-(post$rhosq[i]) * x^2 ),add=T,
+          col=col.alpha("black", .2) ) 
+}
+
+
+K <- matrix(0 , nrow=32, ncol=32)
+
+for( i in 1:32){
+    for( j in 1:32){
+        K[i,j] <- median(post$etasq) * 
+            exp(-median(post$rhosq) * Euc[i,j]) 
+    }
+}
+
+diag(K) <- median(post$etasq) + 0.01
+
+Rho <- round( cov2cor(K), 2)
+View(Rho)
+
+
+```
+
+Cool lets look at additon factors in shaping this relationship
+
+
+```{r}
+
+GP_fish <- map2stan(
+    alist(
+        Haem ~ dbinom(1, p) ,
+        logit( p ) <- a + g[Site] + t[genus]  + b1*Fish,  
+        g[Site] ~ GPL2( meterDist , etasq, rhosq, sigma ) , 
+        a ~ dnorm(0, 10), # prior for global intercept
+        b1 ~ dnorm(0, 10), # prior fish effect
+        t[genus] ~ dnorm( 0, 10), # prior for random effect of taxa
+        etasq ~ dcauchy( 0 , 1), # prior for the max correlation
+        rhosq ~ dcauchy( 0, 1), # prior for the decay rate
+        sigma ~ dcauchy(0,1) # prior for the site level variance
+    ),
+    data = list(
+        Haem = odo_rana1$Haem,
+        Site = odo_rana1$Site,
+        Fish = odo_rana1$Fish,
+        meterDist = Euc,
+        genus = odo_rana1$Genus
+    ),
+    warmup = 2000, iter = 1e4, chains =4
+)
+
+
+
+summary(GP_fish)
+
+post1 <- extract.samples(GP_fish) 
+
+gaus <- post1$g
+class(gaus)
+gaus <- as.data.frame(t(gaus))
+gaus$Site <- site.lat$Site
+
+Sites <- rep(site.lat$Site,32000)
+Sites <- sort(Sites)
+
+post.site <- as.vector(gaus)
+
+joy.df <- cbind.data.frame(Sites, post.site)
+
+
+ggplot(joy.df, aes( x=post.site, y= Sites )) + geom_density_ridges(scale=3) + 
+    xlim(-5,5) + theme_ridges() + xlab("Gaussian adjustment")
+
+
+
+gt <- post1$t
+
+Genera <- rep(unique(odo_rana1$Genus), 32000 )
+postit <- as.vector(gt)
+
+post.tax <- cbind.data.frame(Genera, postit)
+
+ggplot(post.tax, aes( x=postit, y= Genera )) + geom_density_ridges(scale=3) + 
+   theme_ridges() + xlab("Gaussian adjustment") + xlim(-20,20)
+
+
+
+
+
+# map of the sites
+# 
+
+bayMap <-qmap(location = "Sunol ,CA",zoom =9 )
+bayMap + geom_point( aes( x= Longitude, y= Latitude), data= site.lat, col='red', size=1.5)
 ```
